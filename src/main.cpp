@@ -2,6 +2,8 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
 #include "implot.h"
+#include "ProcListMngr.h"
+
 #include <stdio.h>          
 #include <stdlib.h>   
 #include <filesystem>
@@ -339,6 +341,22 @@ static ImVec4 cols[10]
     ImVec4(1.00f, 0.25f, 0.50f, 1.00f)
 };
 
+std::string WideStringToUTF8(const std::wstring& wstr)
+{
+    if (wstr.empty()) return "";
+
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0,
+        wstr.c_str(), (int)wstr.size(),
+        NULL, 0, NULL, NULL);
+
+    std::string str(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0,
+        wstr.c_str(), (int)wstr.size(),
+        &str[0], size_needed, NULL, NULL);
+
+    return str;
+}
+
 int main(int argc, char** argv);
 
 #ifdef _WIN32
@@ -431,6 +449,8 @@ int main(int argc, char** argv)
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
     ImVec4 my_col = ImVec4(0.55f,0.55f,0.77f,1.00f);
     ImVec4 graph_col = ImVec4(0.55f, 0.55f, 0.77f, 1.00f);
+    
+    static ProcListMngr proc;
 
     while (!glfwWindowShouldClose(window))
     {
@@ -457,11 +477,13 @@ int main(int argc, char** argv)
 
         ImGui::NewFrame();
 
+        proc.update();
+
         {
             float data[14] = { 0,2,4,8,16,4,8,16,4,8,16,4,8,16 };
             float data_two[14] = { 2,5,9,3,2,5,9,3,2,5,9,3,2,5 };
             
-            static std::vector<std::string> processes{"proc1", "proc2", "proc3", "proc4"};
+            
             static int selInd = -1;
             ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
             ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
@@ -470,46 +492,62 @@ int main(int argc, char** argv)
                 ImGuiWindowFlags_NoResize |
                 ImGuiWindowFlags_NoMove |
                 ImGuiWindowFlags_NoCollapse);
-            //#########list########
+
+            //######### Table of active processes ########
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 1));
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
-            ImGui::BeginChild("ScrollingRegion", ImVec2(0, 200), true);
 
-            for (int i = 0; i < processes.size(); ++i)
+            float row_height = ImGui::GetTextLineHeight() + ImGui::GetStyle().FramePadding.y * 2;
+
+            if (ImGui::BeginTable("ProcessTable", 2,
+                ImGuiTableFlags_Borders |
+                ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_ScrollY))
             {
-                ImGui::PushID(i);
-                const bool is_selected = (selInd == i);
+                ImGui::TableSetupColumn("PID", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                ImGui::TableSetupColumn("Process Name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
 
-                if (is_selected)
+                ImGuiListClipper clipper;
+                clipper.Begin(proc.size());
+                while (clipper.Step())
                 {
-                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.26f, 0.59f, 0.98f, 0.67f));
-                    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.26f, 0.59f, 0.98f, 1.00f));
-                }
-
-                if (ImGui::Selectable(processes[i].c_str(), is_selected))
-                {
-                    selInd = i;
-                }
-
-                if (is_selected)
-                {
-                    ImGui::PopStyleColor(2);
-                }
-
-                if (ImGui::BeginPopupContextItem())
-                {
-                    if (ImGui::MenuItem("Delete"))
+                    for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
                     {
-                        processes.erase(processes.begin() + i);
-                        if (selInd >= processes.size()) selInd = -1;
+                        ImGui::PushID(i);
+                        ImGui::TableNextRow(ImGuiTableRowFlags_None, row_height);
+
+                        DWORD pid = proc.get(i).first;
+                        std::wstring& wname = proc.get(i).second;
+
+                        std::string name = WideStringToUTF8(wname);
+
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::Text("%lu", pid);
+
+                        ImGui::TableSetColumnIndex(1);
+
+                        ImGuiSelectableFlags selectable_flags =
+                            ImGuiSelectableFlags_SpanAllColumns |
+                            ImGuiSelectableFlags_AllowItemOverlap;
+
+                        bool is_selected = (selInd == i);
+                        if (ImGui::Selectable(name.c_str(), is_selected, selectable_flags,
+                            ImVec2(0, row_height)))
+                        {
+                            selInd = i; 
+                        }
+
+                        if (is_selected)
+                        {
+                            ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
+                                ImGui::GetColorU32(ImGuiCol_Header));
+                        }
+                        ImGui::PopID();
                     }
-                    ImGui::EndPopup();
                 }
-
-                ImGui::PopID();
+                ImGui::EndTable();
             }
-
-            ImGui::EndChild();
             ImGui::PopStyleVar(2);
             ImGui::End();
 

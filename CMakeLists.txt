@@ -1,68 +1,84 @@
 cmake_minimum_required(VERSION 3.20)
-project(TaskMngr)
+project(TaskMngr LANGUAGES CXX)
 
-# Настройка стандарта C++
+# C++ standart
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Win options
 if(WIN32)
     add_definitions(-DUNICODE -D_UNICODE)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS")
 endif()
 
-# Пути к зависимостям
-set(GLFW_DIR "${CMAKE_SOURCE_DIR}/third-party/glfw")
-set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/third-party/imgui")
-set(FONT_DIR "${CMAKE_SOURCE_DIR}/fonts")
+# ==== PATHS ====
+set(PROJECT_ROOT ${CMAKE_SOURCE_DIR})
+set(SRC_DIR      ${PROJECT_ROOT}/src)
+set(HEADERS_DIR  ${PROJECT_ROOT}/headers)
+set(FONT_DIR     ${PROJECT_ROOT}/fonts)
+set(GLFW_DIR     ${PROJECT_ROOT}/third-party/glfw)
+set(IMGUI_DIR    ${PROJECT_ROOT}/third-party/imgui)
 
-# Подключение заголовков GLFW и библиотек
-include_directories("${GLFW_DIR}/include")
-link_directories("${GLFW_DIR}/lib")
+# ==== HEADERS ====
+include_directories(
+    ${HEADERS_DIR}
+    ${GLFW_DIR}/include
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
 
-# Поиск Vulkan SDK
+# ==== Seeking for Vulkan ====
 find_package(Vulkan REQUIRED)
 if(Vulkan_FOUND)
     message(STATUS "Found Vulkan: ${Vulkan_INCLUDE_DIRS}")
+    include_directories(${Vulkan_INCLUDE_DIRS})
 else()
-    message(FATAL_ERROR "Vulkan not found! Make sure Vulkan SDK is installed and VULKAN_SDK is set correctly.")
+    message(FATAL_ERROR "Vulkan not found!")
 endif()
 
-# Подключение заголовков Vulkan
-include_directories(${Vulkan_INCLUDE_DIRS})
-
-file(GLOB IMGUI_SOURCES 
-    "${IMGUI_DIR}/*.cpp"
-    "${IMGUI_DIR}/*.h"
+# ==== Proj Files ====
+file(GLOB HEADER_FILES "${HEADERS_DIR}/*.[hH]*")
+set(SOURCE_FILES
+    ${SRC_DIR}/main.cpp
+    ${SRC_DIR}/ProcListMngr.cpp
 )
 
-# Сборка ImGui из исходников
-add_library(imgui STATIC
-    ${IMGUI_SOURCES}
+file(GLOB IMGUI_SOURCES 
+    ${IMGUI_DIR}/*.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
 )
 
-# Подключение заголовков ImGui и Vulkan для библиотеки
+# ==== Libs ====
+link_directories(${GLFW_DIR}/lib)
+
+add_library(imgui STATIC ${IMGUI_SOURCES})
 target_include_directories(imgui PUBLIC
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${Vulkan_INCLUDE_DIRS}
 )
 
-# Создание исполняемого файла
-add_executable(${PROJECT_NAME} WIN32 
-    src/main.cpp
+# ==== Executable ====
+add_executable(${PROJECT_NAME} WIN32
+    ${SOURCE_FILES}
+    ${HEADER_FILES}
 )
 
-# Линковка библиотек
+# ==== Grouping headers and source files for vs studio ====
+source_group("Header Files" FILES ${HEADER_FILES})
+source_group("Source Files" FILES ${SOURCE_FILES})
+
+# ==== Linking ====
 target_link_libraries(${PROJECT_NAME} PRIVATE
     imgui
-    glfw3  
+    glfw3
     Vulkan::Vulkan
 )
 
-
+# ==== Fonts copying ====
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    "${CMAKE_SOURCE_DIR}/fonts"
+    ${FONT_DIR}
     "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fonts"
 )
