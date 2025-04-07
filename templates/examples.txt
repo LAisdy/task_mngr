@@ -1,0 +1,25 @@
+WINDOW with PLOT of 2 GRAPHS and COLOR EDIT
+
+{
+    float data[14] = { 0,2,4,8,16,4,8,16,4,8,16,4,8,16 };
+    float data_two[14] = { 2,5,9,3,2,5,9,3,2,5,9,3,2,5 };
+
+    ImGui::Begin("Hi");
+
+    if (ImPlot::BeginPlot("My plot", ImVec2(-1, 200)))
+    {
+        ImPlot::PushStyleColor(ImPlotCol_Line, cols[0]);
+        ImGui::ColorEdit3("Graph", (float*)&cols[0]);
+        ImPlot::PlotLine("Graph", data, 14);
+        ImPlot::PopStyleColor();
+
+        ImPlot::PushStyleColor(ImPlotCol_Line, cols[1]);
+        ImGui::ColorEdit3("Graph_two", (float*)&cols[1]);
+        ImPlot::PlotLine("Graph_two", data_two, 14);
+        ImPlot::PopStyleColor();
+
+        ImPlot::EndPlot();
+    }
+    ImGui::End();
+
+}
