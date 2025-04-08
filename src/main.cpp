@@ -363,7 +363,11 @@ int main(int argc, char** argv);
 #include <windows.h>
 #include <sal.h> 
 
-int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+int APIENTRY WinMain(
+    _In_ HINSTANCE hInstance,
+    _In_opt_ HINSTANCE hPrevInstance,
+    _In_ LPSTR lpCmdLine,
+    _In_ int nCmdShow)
 {
     return main(__argc, __argv);
 }
@@ -371,6 +375,18 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 int main(int argc, char** argv)
 {
+    HANDLE hMutex = CreateMutexA(
+        nullptr,       
+        FALSE,         
+        "CustomTaskMngrMutex"  
+    );
+
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        MessageBoxA(nullptr, "Task manager is already running.", "Warning", MB_OK | MB_ICONWARNING);
+        return 0;
+    }
+
     int width{540};
     int height{540};
 
