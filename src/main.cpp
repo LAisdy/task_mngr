@@ -341,7 +341,7 @@ static ImVec4 cols[10]
     ImVec4(1.00f, 0.25f, 0.50f, 1.00f)
 };
 
-std::string WideStringToUTF8(const std::wstring& wstr)
+static std::string WideStringToUTF8(const std::wstring& wstr)
 {
     if (wstr.empty()) return "";
 
@@ -356,6 +356,95 @@ std::string WideStringToUTF8(const std::wstring& wstr)
 
     return str;
 }
+
+static BOOL IsProcessElevated()
+{
+    BOOL fIsElevated = FALSE;
+    HANDLE hToken = NULL;
+
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken))
+        return FALSE; 
+
+    TOKEN_ELEVATION elevation;
+    DWORD dwSize = sizeof(TOKEN_ELEVATION);
+
+    if (GetTokenInformation(hToken, TokenElevation, &elevation, sizeof(elevation), &dwSize))
+        fIsElevated = elevation.TokenIsElevated;
+
+    CloseHandle(hToken);
+    return fIsElevated;
+}
+
+static BOOL IsUserAdmin()
+{
+    BOOL b;
+    SID_IDENTIFIER_AUTHORITY NtAuthority = SECURITY_NT_AUTHORITY;
+    PSID AdministratorsGroup;
+    b = AllocateAndInitializeSid(
+        &NtAuthority,
+        2,
+        SECURITY_BUILTIN_DOMAIN_RID,
+        DOMAIN_ALIAS_RID_ADMINS,
+        0, 0, 0, 0, 0, 0,
+        &AdministratorsGroup);
+
+    if (b)
+    {
+        if (!CheckTokenMembership(NULL, AdministratorsGroup, &b))
+        {
+            b = FALSE;
+        }
+        FreeSid(AdministratorsGroup);
+    }
+
+    return(b);
+}
+
+static BOOL IsEnabledRestartAsAdminBtn()
+{
+    return IsProcessElevated() && IsUserAdmin();
+}
+
+
+static std::wstring GetProcessPath(DWORD pid)
+{
+    std::wstring path;
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (hProcess)
+    {
+        wchar_t buffer[MAX_PATH];
+        DWORD size = MAX_PATH;
+        if (QueryFullProcessImageNameW(hProcess, 0, buffer, &size))
+        {
+            path = buffer;
+        }
+        CloseHandle(hProcess);
+    }
+    return path;
+}
+
+static bool RunAsAdmin(const std::wstring& exePath)
+{
+    SHELLEXECUTEINFOW sei = { sizeof(sei) };
+    sei.lpVerb = L"runas";  
+    sei.lpFile = exePath.c_str();
+    sei.nShow = SW_SHOWNORMAL;
+
+    return ShellExecuteExW(&sei);
+}
+
+static bool KillProcessByPID(DWORD pid)
+{
+    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    if (!hProcess)
+        return false;
+
+    bool result = TerminateProcess(hProcess, 0);
+    CloseHandle(hProcess);
+    return result;
+}
+
+
 
 int main(int argc, char** argv);
 
@@ -377,8 +466,8 @@ int main(int argc, char** argv)
 {
     HANDLE hMutex = CreateMutexA(
         nullptr,       
-        FALSE,         
-        "CustomTaskMngrMutex"  
+        TRUE,         
+        "Global\\CustomTaskMngrMutex_{201e594c-7760-4bf8-9d3c-22cb762e2ec7}"  
     );
 
     if (GetLastError() == ERROR_ALREADY_EXISTS)
@@ -470,6 +559,7 @@ int main(int argc, char** argv)
 
     while (!glfwWindowShouldClose(window))
     {
+        bool enableAdminBtn = IsEnabledRestartAsAdminBtn();
         glfwPollEvents();   
 
         int fb_width, fb_height;
@@ -496,10 +586,6 @@ int main(int argc, char** argv)
         proc.update();
 
         {
-            float data[14] = { 0,2,4,8,16,4,8,16,4,8,16,4,8,16 };
-            float data_two[14] = { 2,5,9,3,2,5,9,3,2,5,9,3,2,5 };
-            
-            
             static int selInd = -1;
             ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
             ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
@@ -571,9 +657,25 @@ int main(int argc, char** argv)
 
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5, 5));
             ImGui::Spacing();
-            ImGui::Button("Run as admin", ImVec2(120, 20));
+
+            ImGui::BeginDisabled(!enableAdminBtn);
+            if (ImGui::Button("Run as admin", ImVec2(120, 20)))
+            {
+
+            }
+            ImGui::EndDisabled();
+
             ImGui::SameLine();
-            ImGui::Button("End Task", ImVec2(120, 20));
+            if (ImGui::Button("End Task", ImVec2(120, 20)))
+            {
+                DWORD sel_pid;
+                if (selInd != -1)
+                {
+                    sel_pid = proc.get(selInd).first;
+                    KillProcessByPID(sel_pid);
+                }
+            }
+
             ImGui::SameLine();
             ImGui::Button("SEND", ImVec2(120, 20));
             ImGui::SameLine();
