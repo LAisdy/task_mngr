@@ -374,8 +374,8 @@ int main(int argc, char** argv)
     int width{540};
     int height{540};
 
-    int minWidth{ 400 };
-    int minHeight{ 400 };
+    int minWidth{ 510 };
+    int minHeight{ 200 };
 
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
@@ -498,12 +498,15 @@ int main(int argc, char** argv)
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
 
             float row_height = ImGui::GetTextLineHeight() + ImGui::GetStyle().FramePadding.y * 2;
+            ImGui::BeginChild("ChildTable", ImVec2(0, -30), true, ImGuiWindowFlags_HorizontalScrollbar);
 
             if (ImGui::BeginTable("ProcessTable", 2,
                 ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
-                ImGuiTableFlags_ScrollY))
+                ImGuiTableFlags_ScrollY));
+
             {
+                ImGui::TableSetupScrollFreeze(0, 1);
                 ImGui::TableSetupColumn("PID", ImGuiTableColumnFlags_WidthFixed, 80.0f);
                 ImGui::TableSetupColumn("Process Name", ImGuiTableColumnFlags_WidthStretch);
                 ImGui::TableHeadersRow();
@@ -548,7 +551,19 @@ int main(int argc, char** argv)
                 }
                 ImGui::EndTable();
             }
-            ImGui::PopStyleVar(2);
+            ImGui::EndChild();
+
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5, 5));
+            ImGui::Spacing();
+            ImGui::Button("Run as admin", ImVec2(120, 20));
+            ImGui::SameLine();
+            ImGui::Button("End Task", ImVec2(120, 20));
+            ImGui::SameLine();
+            ImGui::Button("SEND", ImVec2(120, 20));
+            ImGui::SameLine();
+            ImGui::Button("GET", ImVec2(120, 20));
+
+            ImGui::PopStyleVar(3);
             ImGui::End();
 
         }
