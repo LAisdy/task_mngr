@@ -12,6 +12,8 @@
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 
 namespace fs = std::filesystem;
 
@@ -341,6 +343,8 @@ static ImVec4 cols[10]
     ImVec4(1.00f, 0.25f, 0.50f, 1.00f)
 };
 
+WNDPROC g_OriginalWndProc = nullptr;
+
 static std::string WideStringToUTF8(const std::wstring& wstr)
 {
     if (wstr.empty()) return "";
@@ -405,7 +409,6 @@ static BOOL IsEnabledRestartAsAdminBtn()
     return IsProcessElevated() && IsUserAdmin();
 }
 
-
 static std::wstring GetProcessPath(DWORD pid)
 {
     std::wstring path;
@@ -444,6 +447,90 @@ static bool KillProcessByPID(DWORD pid)
     return result;
 }
 
+void AddTrayIcon(HWND hwnd, HICON hIcon)
+{
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(NOTIFYICONDATAW);
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    nid.uCallbackMessage = WM_USER + 1; 
+    nid.hIcon = hIcon; 
+    wcscpy_s(nid.szTip, L"Task Manager");
+
+    Shell_NotifyIcon(NIM_ADD, &nid);
+}
+
+LRESULT CALLBACK MyWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+    case WM_CLOSE:
+    {
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+    }
+    case WM_ACTIVATE:
+    {
+        if (LOWORD(wParam) != WA_INACTIVE)
+            SetForegroundWindow(hwnd);
+        break;
+    }
+    case WM_USER + 1:
+    {
+        if (lParam == WM_LBUTTONDBLCLK)
+        {
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+        }
+        else if (lParam == WM_RBUTTONUP) 
+        {
+            
+            POINT pt;
+            GetCursorPos(&pt);
+
+            HMENU hMenu = CreatePopupMenu();
+            AppendMenu(hMenu, MF_STRING, 1, L"Show");
+            AppendMenu(hMenu, MF_STRING, 2, L"Exit");
+
+            SetForegroundWindow(hwnd); 
+            TrackPopupMenu(hMenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
+            DestroyMenu(hMenu);
+        }
+        break;
+    }
+
+    case WM_COMMAND:
+    {
+        switch (LOWORD(wParam))
+        {
+        case 1:
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+            break;
+        case 2: 
+            NOTIFYICONDATA nid = {};
+            nid.cbSize = sizeof(NOTIFYICONDATA);
+            nid.hWnd = hwnd; 
+            nid.uID = 1;      
+
+            Shell_NotifyIcon(NIM_DELETE, &nid);
+            PostQuitMessage(0); 
+            break;
+        }
+        break;
+    }
+    default:
+    {
+        return CallWindowProc(g_OriginalWndProc, hwnd, uMsg, wParam, lParam);
+    }
+    }
+
+    if (g_OriginalWndProc)
+        return CallWindowProc(g_OriginalWndProc, hwnd, uMsg, wParam, lParam);
+    else
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
 
 
 int main(int argc, char** argv);
@@ -479,7 +566,7 @@ int main(int argc, char** argv)
     int width{540};
     int height{540};
 
-    int minWidth{ 510 };
+    int minWidth{ 540 };
     int minHeight{ 200 };
 
     glfwSetErrorCallback(glfw_error_callback);
@@ -523,11 +610,29 @@ int main(int argc, char** argv)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; 
     
     fs::path exePath = fs::path(argv[0]).parent_path();
-    fs::path fs_fontPath = exePath / "fonts/FiraCodeNerdFont-Bold.ttf";
-    
-    std::string fontPath = fs_fontPath.string();
 
+    //fonts loading
+    fs::path fs_fontPath = exePath / "fonts/FiraCodeNerdFont-Bold.ttf";
+    std::string fontPath = fs_fontPath.string();
     io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f);
+    
+    //icons loading
+    HWND hwnd = glfwGetWin32Window(window);
+    fs::path fs_icoPath = exePath / "icons/tray.ico";
+    std::string icoPath = fs_icoPath.string();
+
+    HICON hIcon = static_cast<HICON>(LoadImageA(nullptr, icoPath.c_str(), IMAGE_ICON, 0, 0, LR_LOADFROMFILE));
+    if (!hIcon)
+    {
+        MessageBox(NULL, L"Cannot load icon", L"Error", MB_OK);
+        return -1;
+    }
+
+    g_OriginalWndProc = (WNDPROC)GetWindowLongPtr(hwnd, GWLP_WNDPROC);
+
+    SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)MyWndProc);
+    AddTrayIcon(hwnd, hIcon);
+
     ImGui::StyleColorsDark();
     
     ImGui_ImplGlfw_InitForVulkan(window, true);
@@ -659,9 +764,15 @@ int main(int argc, char** argv)
             ImGui::Spacing();
 
             ImGui::BeginDisabled(!enableAdminBtn);
-            if (ImGui::Button("Run as admin", ImVec2(120, 20)))
+            if (ImGui::Button("Restart with admin", ImVec2(150, 20)))
             {
-
+                DWORD sel_pid;
+                if (selInd != -1)
+                {
+                    sel_pid = proc.get(selInd).first;
+                    KillProcessByPID(sel_pid);
+                    RunAsAdmin(GetProcessPath(sel_pid));
+                }
             }
             ImGui::EndDisabled();
 
@@ -677,9 +788,9 @@ int main(int argc, char** argv)
             }
 
             ImGui::SameLine();
-            ImGui::Button("SEND", ImVec2(120, 20));
+            ImGui::Button("Send Data", ImVec2(120, 20));
             ImGui::SameLine();
-            ImGui::Button("GET", ImVec2(120, 20));
+            ImGui::Button("Get Data", ImVec2(120, 20));
 
             ImGui::PopStyleVar(3);
             ImGui::End();
@@ -699,6 +810,9 @@ int main(int argc, char** argv)
             FramePresent(wd);
         }
     }
+
+    //icons freeing
+    DestroyIcon(hIcon);
 
     err = vkDeviceWaitIdle(g_Device);
     check_vk_result(err);

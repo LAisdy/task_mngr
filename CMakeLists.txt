@@ -16,6 +16,7 @@ set(PROJECT_ROOT ${CMAKE_SOURCE_DIR})
 set(SRC_DIR      ${PROJECT_ROOT}/src)
 set(HEADERS_DIR  ${PROJECT_ROOT}/headers)
 set(FONT_DIR     ${PROJECT_ROOT}/fonts)
+set(ICONS_DIR   ${PROJECT_ROOT}/icons)
 set(GLFW_DIR     ${PROJECT_ROOT}/third-party/glfw)
 set(IMGUI_DIR    ${PROJECT_ROOT}/third-party/imgui)
 
@@ -82,3 +83,11 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     ${FONT_DIR}
     "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fonts"
 )
+
+# ==== Icons copying ====
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${ICONS_DIR}
+    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/icons"
+)
+
