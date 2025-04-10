@@ -78,10 +78,17 @@ target_include_directories(nlohmann_json INTERFACE
 
 # openssl
 link_directories(${OPENSSL_DIR}/lib)
-add_library(openssl STATIC IMPORTED)  
-set_target_properties(openssl PROPERTIES IMPORTED_LOCATION ${OPENSSL_DIR}/lib/libssl.lib)
-target_include_directories(openssl INTERFACE 
-    ${OPENSSL_DIR}/include
+
+add_library(OpenSSL::Crypto STATIC IMPORTED)
+set_target_properties(OpenSSL::Crypto PROPERTIES
+    IMPORTED_LOCATION "${OPENSSL_DIR}/lib/libcrypto_static.lib"
+    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_DIR}/include"
+)
+
+add_library(OpenSSL::SSL STATIC IMPORTED)
+set_target_properties(OpenSSL::SSL PROPERTIES
+    IMPORTED_LOCATION "${OPENSSL_DIR}/lib/libssl_static.lib"
+    INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_DIR}/include"
 )
 
 
@@ -109,8 +116,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     glfw3
     Vulkan::Vulkan
     Rpcrt4
+    psapi
     nlohmann_json
-    openssl
+    OpenSSL::Crypto
+    OpenSSL::SSL
     curl
 )
 

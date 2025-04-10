@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
@@ -526,6 +529,45 @@ static LRESULT CALLBACK MyWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
+static bool EnableDebugPrivilege()
+{
+    HANDLE hToken = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken))
+    {
+        std::cerr << "OpenProcessToken failed: " << GetLastError() << std::endl;
+        return false;
+    }
+
+    TOKEN_PRIVILEGES tp;
+    LUID luid;
+    if (!LookupPrivilegeValueW(nullptr, SE_DEBUG_NAME, &luid))
+    {
+        std::cerr << "LookupPrivilegeValue failed: " << GetLastError() << std::endl;
+        CloseHandle(hToken);
+        return false;
+    }
+
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+    if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(tp), nullptr, nullptr))
+    {
+        std::cerr << "AdjustTokenPrivileges failed: " << GetLastError() << std::endl;
+        CloseHandle(hToken);
+        return false;
+    }
+
+    if (GetLastError() != ERROR_SUCCESS)
+    {
+        std::cerr << "AdjustTokenPrivileges did not succeed: " << GetLastError() << std::endl;
+        CloseHandle(hToken);
+        return false;
+    }
+
+    CloseHandle(hToken);
+    return true;
+}
 
 int main(int argc, char** argv);
 
@@ -545,7 +587,11 @@ int APIENTRY WinMain(
 
 int main(int argc, char** argv)
 {
-    
+    if (IsProcessElevated() && IsUserAdmin())
+    {
+        EnableDebugPrivilege();
+    }
+
     HANDLE hMutex = CreateMutexA(
         nullptr,       
         TRUE,         
@@ -831,8 +877,23 @@ int main(int argc, char** argv)
 
             if (ImGui::Button("Send Data", ImVec2(120, 20)))
             {
-                std::string rid = req_mngr.gen_rid();
-                MessageBoxA(hwnd, rid.c_str(), "Msg", MB_OK | MB_ICONERROR);
+                DWORD sel_pid;
+                if (selInd != -1)
+                {
+                    sel_pid = proc.get(selInd).first;
+                    req_mngr.get_process_dlls(sel_pid);
+                }
+                std::wstring modules=L"";
+                std::wstring endl = L" ";
+                for (const auto& path : req_mngr.dlls)
+                {
+                    if (path.empty())
+                    {
+                        break;
+                    }
+                    modules += path+endl;
+                }
+                MessageBox(hwnd, modules.c_str(), L"msg", 0);
             }
 
             ImGui::SameLine();
