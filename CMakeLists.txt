@@ -16,9 +16,15 @@ set(PROJECT_ROOT ${CMAKE_SOURCE_DIR})
 set(SRC_DIR      ${PROJECT_ROOT}/src)
 set(HEADERS_DIR  ${PROJECT_ROOT}/headers)
 set(FONT_DIR     ${PROJECT_ROOT}/fonts)
-set(ICONS_DIR   ${PROJECT_ROOT}/icons)
+set(ICONS_DIR    ${PROJECT_ROOT}/icons)
 set(GLFW_DIR     ${PROJECT_ROOT}/third-party/glfw)
 set(IMGUI_DIR    ${PROJECT_ROOT}/third-party/imgui)
+set(JSON_DIR     ${PROJECT_ROOT}/third-party/nlohmann)
+set(OPENSSL_DIR  ${PROJECT_ROOT}/third-party/OpenSSL)
+set(CURL_DIR     ${PROJECT_ROOT}/third-party/curl)
+
+set(CMAKE_PREFIX_PATH "${OPENSSL_DIR}/lib/cmake" ${CMAKE_PREFIX_PATH})
+
 
 # ==== HEADERS ====
 include_directories(
@@ -42,6 +48,7 @@ file(GLOB HEADER_FILES "${HEADERS_DIR}/*.[hH]*")
 set(SOURCE_FILES
     ${SRC_DIR}/main.cpp
     ${SRC_DIR}/ProcListMngr.cpp
+    ${SRC_DIR}/RequestMngr.cpp
 )
 
 file(GLOB IMGUI_SOURCES 
@@ -51,13 +58,39 @@ file(GLOB IMGUI_SOURCES
 )
 
 # ==== Libs ====
+
+#glfw
 link_directories(${GLFW_DIR}/lib)
 
+#imgui
 add_library(imgui STATIC ${IMGUI_SOURCES})
 target_include_directories(imgui PUBLIC
     ${IMGUI_DIR}
     ${IMGUI_DIR}/backends
     ${Vulkan_INCLUDE_DIRS}
+)
+
+# nlohmann/json
+add_library(nlohmann_json INTERFACE)
+target_include_directories(nlohmann_json INTERFACE 
+    ${JSON_DIR}
+)
+
+# openssl
+link_directories(${OPENSSL_DIR}/lib)
+add_library(openssl STATIC IMPORTED)  
+set_target_properties(openssl PROPERTIES IMPORTED_LOCATION ${OPENSSL_DIR}/lib/libssl.lib)
+target_include_directories(openssl INTERFACE 
+    ${OPENSSL_DIR}/include
+)
+
+
+# Curl
+link_directories(${CURL_DIR}/lib)
+add_library(curl STATIC IMPORTED)  
+set_target_properties(curl PROPERTIES IMPORTED_LOCATION ${CURL_DIR}/lib/libcurl_a.lib)
+target_include_directories(curl INTERFACE 
+    ${CURL_DIR}/include
 )
 
 # ==== Executable ====
@@ -75,6 +108,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     imgui
     glfw3
     Vulkan::Vulkan
+    Rpcrt4
+    nlohmann_json
+    openssl
+    curl
 )
 
 # ==== Fonts copying ====

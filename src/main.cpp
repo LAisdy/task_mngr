@@ -3,12 +3,14 @@
 #include "imgui_impl_vulkan.h"
 #include "implot.h"
 #include "ProcListMngr.h"
-
+#include "RequestMngr.h"
 #include <stdio.h>          
 #include <stdlib.h>   
 #include <filesystem>
 #include <string>
 #include <vector>
+
+
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -317,33 +319,11 @@ static void FramePresent(ImGui_ImplVulkanH_Window* wd)
     wd->SemaphoreIndex = (wd->SemaphoreIndex + 1) % wd->SemaphoreCount;
 }
 
-
-
-//contrasting colors for plots
-static ImVec4 cols[10]
-{
-    ImVec4(0.90f, 0.18f, 0.18f, 1.00f),
-
-    ImVec4(0.00f, 0.65f, 0.95f, 1.00f),
-
-    ImVec4(0.55f, 0.95f, 0.15f, 1.00f),
-
-    ImVec4(0.85f, 0.15f, 0.85f, 1.00f),
-
-    ImVec4(0.95f, 0.85f, 0.15f, 1.00f),
-
-    ImVec4(0.10f, 0.70f, 0.65f, 1.00f),
-
-    ImVec4(1.00f, 0.50f, 0.00f, 1.00f),
-
-    ImVec4(0.60f, 0.20f, 0.80f, 1.00f),
-
-    ImVec4(0.40f, 0.95f, 0.40f, 1.00f),
-
-    ImVec4(1.00f, 0.25f, 0.50f, 1.00f)
-};
+//my global vars ant custom funcs
 
 WNDPROC g_OriginalWndProc = nullptr;
+
+fs::path exePath;
 
 static std::string WideStringToUTF8(const std::wstring& wstr)
 {
@@ -447,7 +427,20 @@ static bool KillProcessByPID(DWORD pid)
     return result;
 }
 
-void AddTrayIcon(HWND hwnd, HICON hIcon)
+static void SetAppIcon(HWND hwnd, HICON hIcon_main)
+{
+    if (hIcon_main)
+    {
+        SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon_main);
+        SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon_main);
+    }
+    else
+    {
+        MessageBox(hwnd, L"Failed to load main icon.", L"Error", MB_OK | MB_ICONERROR);
+    }
+}
+
+static void AddTrayIcon(HWND hwnd, HICON hIcon)
 {
     NOTIFYICONDATAW nid = {};
     nid.cbSize = sizeof(NOTIFYICONDATAW);
@@ -461,10 +454,11 @@ void AddTrayIcon(HWND hwnd, HICON hIcon)
     Shell_NotifyIcon(NIM_ADD, &nid);
 }
 
-LRESULT CALLBACK MyWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK MyWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg)
     {
+
     case WM_CLOSE:
     {
         ShowWindow(hwnd, SW_HIDE);
@@ -551,6 +545,7 @@ int APIENTRY WinMain(
 
 int main(int argc, char** argv)
 {
+    
     HANDLE hMutex = CreateMutexA(
         nullptr,       
         TRUE,         
@@ -575,13 +570,13 @@ int main(int argc, char** argv)
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
-
     GLFWwindow* window = glfwCreateWindow(width, height, "Task Manager", nullptr, nullptr);
     if (!glfwVulkanSupported())
     {
         printf("GLFW: Vulkan Not Supported\n");
         return 1;
     }
+    
 
     glfwSetWindowSizeLimits(window, minWidth, minHeight, GLFW_DONT_CARE, GLFW_DONT_CARE);
 
@@ -609,29 +604,43 @@ int main(int argc, char** argv)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; 
     
-    fs::path exePath = fs::path(argv[0]).parent_path();
+    exePath = fs::path(argv[0]).parent_path();
 
     //fonts loading
     fs::path fs_fontPath = exePath / "fonts/FiraCodeNerdFont-Bold.ttf";
     std::string fontPath = fs_fontPath.string();
     io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f);
     
-    //icons loading
+    //tray icons loading
     HWND hwnd = glfwGetWin32Window(window);
     fs::path fs_icoPath = exePath / "icons/tray.ico";
     std::string icoPath = fs_icoPath.string();
 
-    HICON hIcon = static_cast<HICON>(LoadImageA(nullptr, icoPath.c_str(), IMAGE_ICON, 0, 0, LR_LOADFROMFILE));
-    if (!hIcon)
+    HICON hIcon_tray = static_cast<HICON>(LoadImageA(nullptr, icoPath.c_str(), IMAGE_ICON, 0, 0, LR_LOADFROMFILE));
+    
+    if (!hIcon_tray)
     {
         MessageBox(NULL, L"Cannot load icon", L"Error", MB_OK);
         return -1;
     }
 
+    //main window icon loading 
+    fs::path fs_mainIcoPath = exePath / "icons/main.ico";
+    std::string mainIcoPath = fs_mainIcoPath.string();
+
+    HICON hIcon_main = static_cast<HICON>(LoadImageA(nullptr, mainIcoPath.c_str(), IMAGE_ICON, 0, 0, LR_LOADFROMFILE));
+    if (!hIcon_main) {
+        DWORD dwError = GetLastError();
+        std::string errorMessage = "Failed to load main icon. Error code: " + std::to_string(dwError);
+        MessageBoxA(hwnd, errorMessage.c_str(), "Error", MB_OK | MB_ICONERROR);
+    }
+
+    SetAppIcon(hwnd, hIcon_main);
+
     g_OriginalWndProc = (WNDPROC)GetWindowLongPtr(hwnd, GWLP_WNDPROC);
 
     SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)MyWndProc);
-    AddTrayIcon(hwnd, hIcon);
+    AddTrayIcon(hwnd, hIcon_tray);
 
     ImGui::StyleColorsDark();
     
@@ -661,6 +670,8 @@ int main(int argc, char** argv)
     ImVec4 graph_col = ImVec4(0.55f, 0.55f, 0.77f, 1.00f);
     
     static ProcListMngr proc;
+    static RequestMngr req_mngr;
+    int selInd = -1;
 
     while (!glfwWindowShouldClose(window))
     {
@@ -691,7 +702,6 @@ int main(int argc, char** argv)
         proc.update();
 
         {
-            static int selInd = -1;
             ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
             ImGui::SetNextWindowSize(io.DisplaySize, ImGuiCond_Always);
 
@@ -748,6 +758,36 @@ int main(int argc, char** argv)
                             selInd = i; 
                         }
 
+                        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+                        {
+                            selInd = i; 
+                            ImGui::OpenPopup("ItemContextMenu");
+                        }
+
+                        if (ImGui::BeginPopup("ItemContextMenu"))
+                        {
+                            if (ImGui::MenuItem("End Task"))
+                            {
+                                DWORD pid = proc.get(selInd).first;
+                                KillProcessByPID(pid);
+                            }
+
+                            ImGui::BeginDisabled(!enableAdminBtn);
+                            if (ImGui::MenuItem("Restart as Admin"))
+                            {                               
+                                DWORD sel_pid;
+                                if (selInd != -1)
+                                {
+                                    sel_pid = proc.get(selInd).first;
+                                    KillProcessByPID(sel_pid);
+                                    RunAsAdmin(GetProcessPath(sel_pid));
+                                }                        
+                            }
+                            ImGui::EndDisabled();
+
+                            ImGui::EndPopup();
+                        }
+
                         if (is_selected)
                         {
                             ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
@@ -788,7 +828,13 @@ int main(int argc, char** argv)
             }
 
             ImGui::SameLine();
-            ImGui::Button("Send Data", ImVec2(120, 20));
+
+            if (ImGui::Button("Send Data", ImVec2(120, 20)))
+            {
+                std::string rid = req_mngr.gen_rid();
+                MessageBoxA(hwnd, rid.c_str(), "Msg", MB_OK | MB_ICONERROR);
+            }
+
             ImGui::SameLine();
             ImGui::Button("Get Data", ImVec2(120, 20));
 
@@ -812,7 +858,8 @@ int main(int argc, char** argv)
     }
 
     //icons freeing
-    DestroyIcon(hIcon);
+    DestroyIcon(hIcon_tray);
+    DestroyIcon(hIcon_main);
 
     err = vkDeviceWaitIdle(g_Device);
     check_vk_result(err);
