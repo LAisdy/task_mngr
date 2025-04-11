@@ -22,7 +22,7 @@ set(IMGUI_DIR    ${PROJECT_ROOT}/third-party/imgui)
 set(JSON_DIR     ${PROJECT_ROOT}/third-party/nlohmann)
 set(OPENSSL_DIR  ${PROJECT_ROOT}/third-party/OpenSSL)
 set(CURL_DIR     ${PROJECT_ROOT}/third-party/curl)
-
+set(SODIUM_DIR   ${PROJECT_ROOT}/third-party/libsodium)
 set(CMAKE_PREFIX_PATH "${OPENSSL_DIR}/lib/cmake" ${CMAKE_PREFIX_PATH})
 
 
@@ -76,6 +76,14 @@ target_include_directories(nlohmann_json INTERFACE
     ${JSON_DIR}
 )
 
+#libsodium
+link_directories(${SODIUM_DIR}/lib)
+add_library(libsodium STATIC IMPORTED)
+set_target_properties(libsodium PROPERTIES
+    IMPORTED_LOCATION "${SODIUM_DIR}/lib/libsodium.lib"
+    INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_DIR}/include"
+)
+
 # openssl
 link_directories(${OPENSSL_DIR}/lib)
 
@@ -95,9 +103,9 @@ set_target_properties(OpenSSL::SSL PROPERTIES
 # Curl
 link_directories(${CURL_DIR}/lib)
 add_library(curl STATIC IMPORTED)  
-set_target_properties(curl PROPERTIES IMPORTED_LOCATION ${CURL_DIR}/lib/libcurl_a.lib)
-target_include_directories(curl INTERFACE 
-    ${CURL_DIR}/include
+set_target_properties(curl PROPERTIES 
+    IMPORTED_LOCATION "${CURL_DIR}/lib/libcurl_a.lib"
+    INTERFACE_INCLUDE_DIRECTORIES "${CURL_DIR}/include"
 )
 
 # ==== Executable ====
@@ -116,8 +124,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     glfw3
     Vulkan::Vulkan
     Rpcrt4
+    Crypt32
     psapi
     nlohmann_json
+    libsodium
     OpenSSL::Crypto
     OpenSSL::SSL
     curl
