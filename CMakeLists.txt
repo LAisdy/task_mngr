@@ -7,9 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Win options
 if(WIN32)
-    add_definitions(-DUNICODE -D_UNICODE)
+    add_definitions(-DUNICODE -D_UNICODE -DCURL_STATICLIB)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS")
 endif()
+
+
 
 # ==== PATHS ====
 set(PROJECT_ROOT ${CMAKE_SOURCE_DIR})
@@ -130,7 +132,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     libsodium
     OpenSSL::Crypto
     OpenSSL::SSL
-    curl
+    curl    
+    ws2_32       
+    wldap32       
+    advapi32     
+    
 )
 
 # ==== Fonts copying ====
@@ -146,4 +152,3 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     ${ICONS_DIR}
     "$<TARGET_FILE_DIR:${PROJECT_NAME}>/icons"
 )
-

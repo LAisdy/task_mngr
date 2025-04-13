@@ -587,6 +587,7 @@ int APIENTRY WinMain(
 
 int main(int argc, char** argv)
 {
+    curl_global_init(CURL_GLOBAL_ALL);
     if (IsProcessElevated() && IsUserAdmin())
     {
         EnableDebugPrivilege();
@@ -655,7 +656,7 @@ int main(int argc, char** argv)
     //fonts loading
     fs::path fs_fontPath = exePath / "fonts/FiraCodeNerdFont-Bold.ttf";
     std::string fontPath = fs_fontPath.string();
-    io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f);
+    io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16);
     
     //tray icons loading
     HWND hwnd = glfwGetWin32Window(window);
@@ -717,6 +718,8 @@ int main(int argc, char** argv)
     
     static ProcListMngr proc;
     static RequestMngr req_mngr;
+    req_mngr.init_key(exePath);
+
     int selInd = -1;
 
     while (!glfwWindowShouldClose(window))
@@ -726,6 +729,12 @@ int main(int argc, char** argv)
 
         int fb_width, fb_height;
         glfwGetFramebufferSize(window, &fb_width, &fb_height);
+        float scale_x = static_cast<float>(fb_width) / width;
+        float scale_y = static_cast<float>(fb_height) / height;
+        float scale = (scale_x + scale_y) / 2.0f;
+        float font_size = 16.0f * scale;
+
+        io.FontGlobalScale = scale;
         if (fb_width > 0 && fb_height > 0 && (g_SwapChainRebuild || g_MainWindowData.Width != fb_width || g_MainWindowData.Height != fb_height))
         {
             ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
@@ -761,7 +770,7 @@ int main(int argc, char** argv)
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
 
             float row_height = ImGui::GetTextLineHeight() + ImGui::GetStyle().FramePadding.y * 2;
-            ImGui::BeginChild("ChildTable", ImVec2(0, -30), true, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::BeginChild("ChildTable", ImVec2(0, -30*scale), true, ImGuiWindowFlags_HorizontalScrollbar);
 
             if (ImGui::BeginTable("ProcessTable", 2,
                 ImGuiTableFlags_Borders |
@@ -850,7 +859,7 @@ int main(int argc, char** argv)
             ImGui::Spacing();
 
             ImGui::BeginDisabled(!enableAdminBtn);
-            if (ImGui::Button("Restart with admin", ImVec2(150, 20)))
+            if (ImGui::Button("Restart with admin", ImVec2(150*scale_x, (scale_y*20 >= font_size) ? 20 * scale_y : (font_size + 10))))
             {
                 DWORD sel_pid;
                 if (selInd != -1)
@@ -863,7 +872,7 @@ int main(int argc, char** argv)
             ImGui::EndDisabled();
 
             ImGui::SameLine();
-            if (ImGui::Button("End Task", ImVec2(120, 20)))
+            if (ImGui::Button("End Task", ImVec2(120*scale_x, (scale_y * 20 >= font_size) ? 20 * scale_y : (font_size + 10))))
             {
                 DWORD sel_pid;
                 if (selInd != -1)
@@ -875,29 +884,26 @@ int main(int argc, char** argv)
 
             ImGui::SameLine();
 
-            if (ImGui::Button("Send Data", ImVec2(120, 20)))
+            if (ImGui::Button("Send Data", ImVec2(120*scale_x, (scale_y * 20 >= font_size) ? 20 * scale_y : (font_size + 10))))
             {
                 DWORD sel_pid;
                 if (selInd != -1)
                 {
                     sel_pid = proc.get(selInd).first;
-                    req_mngr.get_process_dlls(sel_pid);
+                    req_mngr.start_async_send(sel_pid);
                 }
-                std::wstring modules=L"";
-                std::wstring endl = L" ";
-                for (const auto& path : req_mngr.dlls)
-                {
-                    if (path.empty())
-                    {
-                        break;
-                    }
-                    modules += path+endl;
-                }
-                MessageBox(hwnd, modules.c_str(), L"msg", 0);
+                
             }
 
             ImGui::SameLine();
-            ImGui::Button("Get Data", ImVec2(120, 20));
+            if (ImGui::Button("Get Data", ImVec2(120*scale_x, (scale_y * 20 >= font_size) ?20*scale_y:(font_size+10))))
+            {
+                std::string rid = req_mngr.get_last_rid();
+                if (!rid.empty())
+                {
+                    req_mngr.start_async_get();
+                }
+            }
 
             ImGui::PopStyleVar(3);
             ImGui::End();
@@ -934,5 +940,6 @@ int main(int argc, char** argv)
     glfwDestroyWindow(window);
     glfwTerminate();
 
+    curl_global_cleanup();
     return 0;
 }

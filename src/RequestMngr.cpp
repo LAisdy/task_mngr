@@ -1,34 +1,333 @@
 #include "RequestMngr.h"
 
+static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
+{
+    
+    std::string data(static_cast<char*>(contents), size * nmemb);
+    
+    std::ofstream log("curl.log", std::ios::app);
+    log << "\nReceived chunk: " << size * nmemb << " bytes\n";
+    
+
+    ((std::string*)userp)->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
 RequestMngr::RequestMngr()
 {
-
+    if (sodium_init() < 0)
+    {
+        show_warning(L"Crypto library init failed", L"Error");
+        return;
+    }
 }
 
 RequestMngr::~RequestMngr()
 {
-    if (worker_thread_.joinable()) 
-    {
-        worker_thread_.join();
-    }
 }
+
+const std::string& RequestMngr::get_last_rid() const
+{
+    return last_rid_;
+}
+
 
 void RequestMngr::start_async_send(DWORD pid)
 {
-    /*
-    * get dll loaded by proc: 
-    * get_process_dlls(pid) - this will store the dll seq as a string into json_dlls
-    * 
-    * encrypt(json_dlls, key)
-    * 
-    * create json body for msg: {"cmd:1", "rid:<some_random_val>","data: <encrypted_data>"}
-    * send using curl 
-    * TODO: implement curl functions 
-    */
+    get_process_dlls(pid);
+
+    if (dlls.empty())
+    {
+        show_warning(L"Failed to get DLL list. Try run as admin.", L"Error");
+        return;
+    }
+
+    std::vector<unsigned char> encrypted(crypto_secretbox_NONCEBYTES + json_dlls.size() + crypto_secretbox_MACBYTES);
+    std::vector<unsigned char> nonce(crypto_secretbox_NONCEBYTES);
+    std::vector<unsigned char> b64_data(encrypted.size() * 2);
+
+    randombytes_buf(nonce.data(), nonce.size());
+
+    encrypted = encrypt(json_dlls.data(), key);
+
+    if (encrypted.empty())
+    {
+        show_warning(L"Data was not encrypted correctly", L"Error");
+        return;
+    }
+
+    to_base64(b64_data, encrypted);
+    size_t actual_length = strlen(reinterpret_cast<char*>(b64_data.data()));
+    std::string b64_str(reinterpret_cast<char*>(b64_data.data()), actual_length);
+
+    last_rid_ = gen_rid();
+    nlohmann::json request =
+    {
+        {"cmd", 1},
+        {"rid", last_rid_},
+        {"data", b64_str}
+    };
+    std::string json_str = request.dump();
+
+    std::future<void> result = std::async(std::launch::async, [this, request, json_str]()
+        {
+            CURL* curl = curl_easy_init();
+            if (!curl)
+            {
+                show_warning(L"Failed to init CURL", L"Error");
+                return;
+            }
+
+            std::string response;
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+
+            FILE* fp = fopen("curl_info.log", "w"); 
+
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_URL, "http://172.245.127.93/p/applicants.php");
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str.c_str());
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+            curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
+            curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
+            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+            curl_easy_setopt(curl, CURLOPT_STDERR, fp);
+
+            CURLcode res = curl_easy_perform(curl);
+
+            long http_code = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+            
+            std::ofstream log("curl.log", std::ios::app);
+            log << "Sent data: " << json_str <<"\nSent data size: "<< json_str.size() << "\nRequest completed. HTTP: " << http_code
+                << ", Received: " << response.size() << " bytes\n"<<"The response: "<<response<<"\n\n";
+            
+            
+            
+            if (res != CURLE_OK)
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                last_error_ = "[CURL] " + std::string(curl_easy_strerror(res));
+                show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+            }
+            else
+            {
+                try
+                {
+                    auto json_response = nlohmann::json::parse(response);
+                    if (!json_response.contains("rid") || !json_response.contains("status"))
+                    {
+                        show_warning(L"Incorrect response from server", L"Error");
+                        return;
+                    }
+
+                    std::string sent_rid = request["rid"];
+                    if (json_response["rid"] != sent_rid)
+                    {
+                        show_warning(L"Response rid does not match the sent one", L"Error");
+                        return;
+                    }
+
+                    if (json_response["status"] != "true")
+                    {
+                        show_warning(L"Response status is not true", L"Error");
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(mutex);
+                    last_error_.clear();
+                }
+                catch (const std::exception& e)
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    last_error_ = "[JSON] " + std::string(e.what());
+                    show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+                }
+            }
+
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+            fclose(fp);
+        });
+    result.get();
+}
+
+void RequestMngr::start_async_get()
+{
+    nlohmann::json request =
+    {
+        {"cmd", 2},
+        {"rid", last_rid_}
+    };
+
+    std::string json_str = request.dump();
+    std::string encrypted_line;
+
+    std::future<void> result = std::async(std::launch::async, [this, &request, &json_str, &encrypted_line]()
+        {
+            CURL* curl = curl_easy_init();
+            if (!curl)
+            {
+                show_warning(L"Failed to init CURL", L"Error");
+                return;
+            }
+
+            std::string response;
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_URL, "http://172.245.127.93/p/applicants.php");
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str.c_str());
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+            curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
+            curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
+            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+
+            CURLcode res = curl_easy_perform(curl);
+            long http_code = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+            
+            std::ofstream log("curl.log", std::ios::app);
+            log << "Sent data: " << json_str << "\nSent data size: " << json_str.size() << "\nRequest completed. HTTP: " << http_code
+                << ", Received: " << response.size() << " bytes\n" << "The response: " << response << "\n\n";
+            log.close();
+            
+
+            if (res != CURLE_OK)
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                last_error_ = "[CURL] " + std::string(curl_easy_strerror(res));
+                show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+            }
+            else
+            {
+                try
+                {
+                    auto json_response = nlohmann::json::parse(response);
+                    if (!json_response.contains("rid") || !json_response.contains("data"))
+                    {
+                        show_warning(L"Incorrect response from server", L"Error");
+                        return;
+                    }
+
+                    std::string sent_rid = request["rid"];
+                    if (json_response["rid"] != sent_rid)
+                    {
+                        show_warning(L"Response rid does not match the sent one", L"Error");
+                        return;
+                    }
+                    encrypted_line = json_response["data"].get<std::string>();
+                    
+                    std::ofstream log("curl.log", std::ios::app);
+                    log << "\nencrypted_line: " << encrypted_line << "\n";
+                    log.close();
+                    
+
+                    std::lock_guard<std::mutex> lock(mutex);
+                    last_error_.clear();
+                }
+                catch (const std::exception& e)
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    last_error_ = "[JSON] " + std::string(e.what());
+                    show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+                }
+            }
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+        });
+    result.get();
+
+
+    std::vector<unsigned char> decoded_data;
+    from_base64(decoded_data, encrypted_line.c_str());
+    std::vector<uint8_t> decrypted = decrypt(decoded_data, key);
+    std::string decrypted_str(decrypted.begin(), decrypted.end());
+    auto j = nlohmann::json::parse(decrypted_str);
+    std::vector<std::vector<uint8_t>> byteArrays = j.get<std::vector<std::vector<uint8_t>>>();
+    std::vector<std::string> decodedStrings;
+    for (const auto& bytes : byteArrays)
+    {
+        std::string str(bytes.begin(), bytes.end());
+        decodedStrings.push_back(str);
+    }
+    
+    std::stringstream combined;
+
+    for (const auto& line : decodedStrings) 
+    {
+        combined << line << "\n"; 
+    }
+    std::string finalMessage = combined.str();
+    MessageBoxA(NULL, finalMessage.c_str(), "Decoded Strings", MB_OK | MB_ICONINFORMATION);
+}
+
+std::wstring RequestMngr::ConvertToWide(const std::string& str)
+{
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, NULL, 0);
+
+    if (size_needed <= 0)
+    {
+        return L"[Conversion error]";
+    }
+
+    std::wstring wstr(size_needed, 0);
+
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], size_needed);
+
+    wstr.resize(size_needed - 1);
+
+    return wstr;
+}
+
+const std::string& RequestMngr::get_last_error() const 
+{
+    return last_error_;
+}
+
+void RequestMngr::to_base64(std::vector<unsigned char>& b64_data, std::vector<unsigned char>& enc_data)
+{
+    sodium_bin2base64(
+        reinterpret_cast<char*>(b64_data.data()),
+        b64_data.size(),
+        enc_data.data(),
+        enc_data.size(),
+        sodium_base64_VARIANT_ORIGINAL
+    );
+}
+
+void RequestMngr::from_base64(std::vector<unsigned char>& dec_data, const std::string& b64_str)
+{
+    dec_data.resize(b64_str.size());
+    size_t decoded_len = 0;
+    int result = sodium_base642bin(
+        dec_data.data(),               
+        dec_data.size(),               
+        b64_str.c_str(),               
+        b64_str.size(),                
+        nullptr,                       
+        &decoded_len,                  
+        nullptr,                       
+        sodium_base64_VARIANT_ORIGINAL
+    );
+    if (result != 0)
+    {
+        return ; 
+    }
+    dec_data.resize(decoded_len);
+
 }
 
 void RequestMngr::show_warning(std::wstring msg, std::wstring name )
 {
+    if (msg.empty()) return;
     MessageBox(
         NULL,                           
         msg.c_str(),
@@ -37,9 +336,12 @@ void RequestMngr::show_warning(std::wstring msg, std::wstring name )
     );
 }
 
-int RequestMngr::init_key()
+int RequestMngr::init_key(std::filesystem::path keyPath)
 {
-    std::string keyFile = "protected_key.bin";
+    key = gen_key();
+    
+    std::filesystem::path fsKeyFile = keyPath/"protected_key.bin";
+    std::string keyFile = fsKeyFile.string();
     std::vector<BYTE> protectedKey;
     
     if (!load_protected_key(keyFile, protectedKey)) 
@@ -49,7 +351,7 @@ int RequestMngr::init_key()
         if (!save_protected_key(keyFile, protectedKey))
         {
             show_warning(L"Failed to save key", L"Warning");
-            return 1;
+            return 0;
         }
     }
     else 
@@ -57,22 +359,28 @@ int RequestMngr::init_key()
         key = reveal_key_DPAPI(protectedKey);
         if (key.size() != crypto_secretbox_KEYBYTES) {
             show_warning(L"Incorrect key length after unpacking", L"Warning");
-            return 1;
+            return 0;
         }
     }
+    return 0;
 }
 
 std::string RequestMngr::gen_rid()
 {
     UUID uuid;
     RPC_STATUS status = UuidCreate(&uuid);
-    if (status != RPC_S_OK) {
-        throw std::runtime_error("Error UuidCreate, RPC_STATUS: " + std::to_string(status));
+    if (status != RPC_S_OK) 
+    {
+        std::wstring state = L"Error UuidCreate, RPC_STATUS:"+std::to_wstring(status);
+        show_warning(state, L"Error");
+        return{};
     }
     RPC_CSTR str;
     if (UuidToStringA(&uuid, &str) != RPC_S_OK)
     {
-        throw std::runtime_error("Error UuidCreate, RPC_STATUS: " + std::to_string(status));
+        std::wstring state = L"Error UuidCreate, RPC_STATUS:" + std::to_wstring(status);
+        show_warning(state, L"Error");
+        return{};
     }
 
     std::string rid(reinterpret_cast<char*>(str));
@@ -187,7 +495,10 @@ std::vector<BYTE> RequestMngr::gen_key()
 std::vector<unsigned char> RequestMngr::encrypt(const std::string& message, const std::vector<unsigned char>& key)
 {
     if (key.size() != crypto_secretbox_KEYBYTES)
-        throw std::runtime_error("Incorrect key length");
+    {
+        show_warning(L"Incorrect key length", L"Error");
+        return {};
+    };
 
     std::vector<unsigned char> nonce(crypto_secretbox_NONCEBYTES);
     randombytes_buf(nonce.data(), nonce.size());
@@ -199,14 +510,15 @@ std::vector<unsigned char> RequestMngr::encrypt(const std::string& message, cons
         nonce.data(),
         key.data()) != 0)
     {
-        throw std::runtime_error("crypto_secretbox_easy failed");
+        show_warning(L"Encryption failed", L"Error");
+        return {};
     }
 
     nonce.insert(nonce.end(), ciphertext.begin(), ciphertext.end());
     return nonce;
 }
 
-std::string RequestMngr::decrypt(const std::vector<unsigned char>& encrypted, const std::vector<unsigned char>& key)
+std::vector<uint8_t> RequestMngr::decrypt(const std::vector<unsigned char>& encrypted, const std::vector<unsigned char>& key)
 {
     if (encrypted.size() < crypto_secretbox_NONCEBYTES + crypto_secretbox_MACBYTES)
         throw std::runtime_error("Incorrect length of encrypted data");
@@ -224,5 +536,5 @@ std::string RequestMngr::decrypt(const std::vector<unsigned char>& encrypted, co
     {
         throw std::runtime_error("crypto_secretbox_open_easy failed");
     }
-    return std::string(decrypted.begin(), decrypted.end());
+    return decrypted;
 }
