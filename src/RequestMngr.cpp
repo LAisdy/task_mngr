@@ -68,90 +68,90 @@ void RequestMngr::start_async_send(DWORD pid)
         {"data", b64_str}
     };
     std::string json_str = request.dump();
+    
+    //#### debug info ###
+    std::ofstream log("curl_debug.log", std::ios::app);
+    log << "Dlls was added to list and encrypted & encoded as a single string.Starting send.\n";
+    log.close();
+    //#### debug info ###
 
-    std::future<void> result = std::async(std::launch::async, [this, request, json_str]()
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+        log << "Curl is not initialized\n";
+        show_warning(L"Failed to init CURL", L"Error");
+        return;
+    }
+
+    std::string response;
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    FILE* fp = fopen("curl_info.log", "w");
+
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_URL, "http://172.245.127.93/p/applicants.php");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
+    curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    curl_easy_setopt(curl, CURLOPT_STDERR, fp);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    std::ofstream log_send("curl.log", std::ios::app);
+    log_send << "Sent data: " << json_str << "\nSent data size: " << json_str.size() << "\nRequest completed. HTTP: " << http_code
+        << ", Received: " << response.size() << " bytes\n" << "The response: " << response << "\n\n";
+
+
+
+    if (res != CURLE_OK)
+    {
+        last_error_ = "[CURL] " + std::string(curl_easy_strerror(res));
+        show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+    }
+    else
+    {
+        try
         {
-            CURL* curl = curl_easy_init();
-            if (!curl)
+            auto json_response = nlohmann::json::parse(response);
+            if (!json_response.contains("rid") || !json_response.contains("status"))
             {
-                show_warning(L"Failed to init CURL", L"Error");
+                show_warning(L"Incorrect response from server", L"Error");
                 return;
             }
 
-            std::string response;
-            struct curl_slist* headers = nullptr;
-            headers = curl_slist_append(headers, "Content-Type: application/json");
-
-            FILE* fp = fopen("curl_info.log", "w"); 
-
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-            curl_easy_setopt(curl, CURLOPT_URL, "http://172.245.127.93/p/applicants.php");
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str.c_str());
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-            curl_easy_setopt(curl, CURLOPT_POST, 1L);
-            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-            curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
-            curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
-            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-            curl_easy_setopt(curl, CURLOPT_STDERR, fp);
-
-            CURLcode res = curl_easy_perform(curl);
-
-            long http_code = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-            
-            std::ofstream log("curl.log", std::ios::app);
-            log << "Sent data: " << json_str <<"\nSent data size: "<< json_str.size() << "\nRequest completed. HTTP: " << http_code
-                << ", Received: " << response.size() << " bytes\n"<<"The response: "<<response<<"\n\n";
-            
-            
-            
-            if (res != CURLE_OK)
+            std::string sent_rid = request["rid"];
+            if (json_response["rid"] != sent_rid)
             {
-                std::lock_guard<std::mutex> lock(mutex);
-                last_error_ = "[CURL] " + std::string(curl_easy_strerror(res));
-                show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
-            }
-            else
-            {
-                try
-                {
-                    auto json_response = nlohmann::json::parse(response);
-                    if (!json_response.contains("rid") || !json_response.contains("status"))
-                    {
-                        show_warning(L"Incorrect response from server", L"Error");
-                        return;
-                    }
-
-                    std::string sent_rid = request["rid"];
-                    if (json_response["rid"] != sent_rid)
-                    {
-                        show_warning(L"Response rid does not match the sent one", L"Error");
-                        return;
-                    }
-
-                    if (json_response["status"] != "true")
-                    {
-                        show_warning(L"Response status is not true", L"Error");
-                        return;
-                    }
-                    std::lock_guard<std::mutex> lock(mutex);
-                    last_error_.clear();
-                }
-                catch (const std::exception& e)
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    last_error_ = "[JSON] " + std::string(e.what());
-                    show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
-                }
+                show_warning(L"Response rid does not match the sent one", L"Error");
+                return;
             }
 
-            curl_slist_free_all(headers);
-            curl_easy_cleanup(curl);
-            fclose(fp);
-        });
-    result.get();
+            if (json_response["status"] != "true")
+            {
+                show_warning(L"Response status is not true", L"Error");
+                return;
+            }
+            last_error_.clear();
+        }
+        catch (const std::exception& e)
+        {
+            last_error_ = "[JSON] " + std::string(e.what());
+            show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+        }
+    }
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    fclose(fp);
+
 }
 
 void RequestMngr::start_async_get()
@@ -165,85 +165,76 @@ void RequestMngr::start_async_get()
     std::string json_str = request.dump();
     std::string encrypted_line;
 
-    std::future<void> result = std::async(std::launch::async, [this, &request, &json_str, &encrypted_line]()
+    CURL* curl = curl_easy_init();
+    if (!curl)
+    {
+        show_warning(L"Failed to init CURL", L"Error");
+        return;
+    }
+
+    std::string response;
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_URL, "http://172.245.127.93/p/applicants.php");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
+    curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+
+    CURLcode res = curl_easy_perform(curl);
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+
+    std::ofstream log_get("curl.log", std::ios::app);
+    log_get << "Sent data: " << json_str << "\nSent data size: " << json_str.size() << "\nRequest completed. HTTP: " << http_code
+        << ", Received: " << response.size() << " bytes\n" << "The response: " << response << "\n\n";
+    log_get.close();
+
+
+    if (res != CURLE_OK)
+    {
+        last_error_ = "[CURL] " + std::string(curl_easy_strerror(res));
+        show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+    }
+    else
+    {
+        try
         {
-            CURL* curl = curl_easy_init();
-            if (!curl)
+            auto json_response = nlohmann::json::parse(response);
+            if (!json_response.contains("rid") || !json_response.contains("data"))
             {
-                show_warning(L"Failed to init CURL", L"Error");
+                show_warning(L"Incorrect response from server", L"Error");
                 return;
             }
 
-            std::string response;
-            struct curl_slist* headers = nullptr;
-            headers = curl_slist_append(headers, "Content-Type: application/json");
-
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-            curl_easy_setopt(curl, CURLOPT_URL, "http://172.245.127.93/p/applicants.php");
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str.c_str());
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-            curl_easy_setopt(curl, CURLOPT_POST, 1L);
-            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-            curl_easy_setopt(curl, CURLOPT_HEADER, 0L);
-            curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
-            curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-
-            CURLcode res = curl_easy_perform(curl);
-            long http_code = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-
-            
-            std::ofstream log("curl.log", std::ios::app);
-            log << "Sent data: " << json_str << "\nSent data size: " << json_str.size() << "\nRequest completed. HTTP: " << http_code
-                << ", Received: " << response.size() << " bytes\n" << "The response: " << response << "\n\n";
-            log.close();
-            
-
-            if (res != CURLE_OK)
+            std::string sent_rid = request["rid"];
+            if (json_response["rid"] != sent_rid)
             {
-                std::lock_guard<std::mutex> lock(mutex);
-                last_error_ = "[CURL] " + std::string(curl_easy_strerror(res));
-                show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+                show_warning(L"Response rid does not match the sent one", L"Error");
+                return;
             }
-            else
-            {
-                try
-                {
-                    auto json_response = nlohmann::json::parse(response);
-                    if (!json_response.contains("rid") || !json_response.contains("data"))
-                    {
-                        show_warning(L"Incorrect response from server", L"Error");
-                        return;
-                    }
+            encrypted_line = json_response["data"].get<std::string>();
 
-                    std::string sent_rid = request["rid"];
-                    if (json_response["rid"] != sent_rid)
-                    {
-                        show_warning(L"Response rid does not match the sent one", L"Error");
-                        return;
-                    }
-                    encrypted_line = json_response["data"].get<std::string>();
-                    
-                    std::ofstream log("curl.log", std::ios::app);
-                    log << "\nencrypted_line: " << encrypted_line << "\n";
-                    log.close();
-                    
+            log_get << "\nencrypted_line: " << encrypted_line << "\n";
+            log_get.close();
 
-                    std::lock_guard<std::mutex> lock(mutex);
-                    last_error_.clear();
-                }
-                catch (const std::exception& e)
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    last_error_ = "[JSON] " + std::string(e.what());
-                    show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
-                }
-            }
-            curl_slist_free_all(headers);
-            curl_easy_cleanup(curl);
-        });
-    result.get();
+            last_error_.clear();
+        }
+        catch (const std::exception& e)
+        {
+            last_error_ = "[JSON] " + std::string(e.what());
+            show_warning(std::wstring(last_error_.begin(), last_error_.end()), L"Error");
+        }
+    }
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
 
 
     std::vector<unsigned char> decoded_data;
@@ -263,7 +254,7 @@ void RequestMngr::start_async_get()
 
     for (const auto& line : decodedStrings) 
     {
-        combined << line << "\n"; 
+        combined << line << "\t"; 
     }
     std::string finalMessage = combined.str();
     MessageBoxA(NULL, finalMessage.c_str(), "Decoded Strings", MB_OK | MB_ICONINFORMATION);

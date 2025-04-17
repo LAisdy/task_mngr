@@ -48,8 +48,6 @@ public:
 
 private:
 
-	mutable std::mutex mutex;
-
 	std::string json_dlls;
 	std::string last_rid_;
 	std::string last_error_;
