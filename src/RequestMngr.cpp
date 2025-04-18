@@ -32,13 +32,13 @@ const std::string& RequestMngr::get_last_rid() const
 }
 
 
-void RequestMngr::start_async_send(DWORD pid)
+void RequestMngr::start_send(DWORD pid)
 {
     get_process_dlls(pid);
 
     if (dlls.empty())
     {
-        show_warning(L"Failed to get DLL list. Try run as admin.", L"Error");
+        show_warning(L"DLL list is empty.", L"Error");
         return;
     }
 
@@ -154,7 +154,7 @@ void RequestMngr::start_async_send(DWORD pid)
 
 }
 
-void RequestMngr::start_async_get()
+void RequestMngr::start_get()
 {
     nlohmann::json request =
     {
@@ -254,10 +254,10 @@ void RequestMngr::start_async_get()
 
     for (const auto& line : decodedStrings) 
     {
-        combined << line << "\t"; 
+        combined << line << "\x20"; 
     }
     std::string finalMessage = combined.str();
-    MessageBoxA(NULL, finalMessage.c_str(), "Decoded Strings", MB_OK | MB_ICONINFORMATION);
+    MessageBoxA(NULL, finalMessage.c_str(), "DLL list", MB_OK | MB_ICONINFORMATION);
 }
 
 std::wstring RequestMngr::ConvertToWide(const std::string& str)

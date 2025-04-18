@@ -9,7 +9,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
-
+#include <algorithm>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -419,6 +419,45 @@ static bool RunAsAdmin(const std::wstring& exePath)
     return ShellExecuteExW(&sei);
 }
 
+static bool RestartThisAsAdmin(const DWORD pid)
+{
+    DWORD currentPID = GetCurrentProcessId();
+
+    wchar_t buffer[MAX_PATH];
+
+    DWORD length = GetModuleFileNameW(NULL, buffer, MAX_PATH);
+
+    if (length == 0)
+    {
+        return false;
+    }
+
+    std::wstring params = L"./RestartHelper.exe " + std::to_wstring(currentPID);
+    fs::path path = buffer;
+    path = path.parent_path();
+    SHELLEXECUTEINFOW sei = { sizeof(sei) };
+    sei.lpVerb = L"open";       
+    sei.lpFile = L"powershell.exe";    
+    sei.lpParameters = params.c_str();
+    sei.lpDirectory = path.c_str();
+    sei.nShow = SW_HIDE;
+    
+    /*
+    auto msg = L"params: " + params + L"\npath: " + path.c_str();
+    MessageBoxW(NULL, msg.c_str(), L"Debug", MB_ICONINFORMATION);
+    */
+    
+
+    if (ShellExecuteExW(&sei)) 
+    {
+        return true;
+    }
+    else 
+    {
+        return false;
+    }
+}
+
 static bool KillProcessByPID(DWORD pid)
 {
     HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
@@ -573,6 +612,8 @@ int main(int argc, char** argv);
 
 #ifdef _WIN32
 #include <windows.h>
+#undef min
+#undef max
 #include <sal.h> 
 
 int APIENTRY WinMain(
@@ -731,10 +772,10 @@ int main(int argc, char** argv)
         glfwGetFramebufferSize(window, &fb_width, &fb_height);
         float scale_x = static_cast<float>(fb_width) / width;
         float scale_y = static_cast<float>(fb_height) / height;
-        float scale = (scale_x + scale_y) / 2.0f;
-        float font_size = 16.0f * scale;
+        float font_scale = std::max(std::min(scale_x, scale_y), 0.75f);
+        float font_size = 16.0f * font_scale;
 
-        io.FontGlobalScale = scale;
+        io.FontGlobalScale = font_scale;
         if (fb_width > 0 && fb_height > 0 && (g_SwapChainRebuild || g_MainWindowData.Width != fb_width || g_MainWindowData.Height != fb_height))
         {
             ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
@@ -770,13 +811,12 @@ int main(int argc, char** argv)
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
 
             float row_height = ImGui::GetTextLineHeight() + ImGui::GetStyle().FramePadding.y * 2;
-            ImGui::BeginChild("ChildTable", ImVec2(0, -30*scale), true, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::BeginChild("ChildTable", ImVec2(0, -30*font_scale), true, ImGuiWindowFlags_HorizontalScrollbar);
 
             if (ImGui::BeginTable("ProcessTable", 2,
                 ImGuiTableFlags_Borders |
                 ImGuiTableFlags_RowBg |
-                ImGuiTableFlags_ScrollY));
-
+                ImGuiTableFlags_ScrollY))
             {
                 ImGui::TableSetupScrollFreeze(0, 1);
                 ImGui::TableSetupColumn("PID", ImGuiTableColumnFlags_WidthFixed, 80.0f);
@@ -784,7 +824,7 @@ int main(int argc, char** argv)
                 ImGui::TableHeadersRow();
 
                 ImGuiListClipper clipper;
-                clipper.Begin(proc.size());
+                clipper.Begin((int)proc.size());
                 while (clipper.Step())
                 {
                     for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++)
@@ -793,7 +833,7 @@ int main(int argc, char** argv)
                         ImGui::TableNextRow(ImGuiTableRowFlags_None, row_height);
 
                         DWORD pid = proc.get(i).first;
-                        std::wstring& wname = proc.get(i).second;
+                        std::wstring wname = proc.get(i).second;
 
                         std::string name = WideStringToUTF8(wname);
 
@@ -858,15 +898,18 @@ int main(int argc, char** argv)
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5, 5));
             ImGui::Spacing();
 
-            ImGui::BeginDisabled(!enableAdminBtn);
+            ImGui::BeginDisabled(enableAdminBtn);
             if (ImGui::Button("Restart with admin", ImVec2(150*scale_x, (scale_y*20 >= font_size) ? 20 * scale_y : (font_size + 10))))
             {
-                DWORD sel_pid;
-                if (selInd != -1)
+                DWORD currentPID = GetCurrentProcessId();
+                if (!RestartThisAsAdmin(currentPID))
                 {
-                    sel_pid = proc.get(selInd).first;
-                    KillProcessByPID(sel_pid);
-                    RunAsAdmin(GetProcessPath(sel_pid));
+                    DWORD err = GetLastError();
+                    MessageBoxA(NULL,
+                        std::to_string(err).c_str(),
+                        "Error",
+                        MB_ICONWARNING
+                    );
                 }
             }
             ImGui::EndDisabled();
@@ -890,7 +933,7 @@ int main(int argc, char** argv)
                 if (selInd != -1)
                 {
                     sel_pid = proc.get(selInd).first;
-                    req_mngr.start_async_send(sel_pid);
+                    req_mngr.start_send(sel_pid);
                 }
                 
             }
@@ -901,7 +944,7 @@ int main(int argc, char** argv)
                 std::string rid = req_mngr.get_last_rid();
                 if (!rid.empty())
                 {
-                    req_mngr.start_async_get();
+                    req_mngr.start_get();
                 }
             }
 
@@ -923,6 +966,9 @@ int main(int argc, char** argv)
             FramePresent(wd);
         }
     }
+
+
+    CloseHandle(hMutex);
 
     //icons freeing
     DestroyIcon(hIcon_tray);

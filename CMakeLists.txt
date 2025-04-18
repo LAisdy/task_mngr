@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TaskMngr LANGUAGES CXX)
+project(TaskMgr LANGUAGES CXX)
 
 # C++ standart
 set(CMAKE_CXX_STANDARD 17)
@@ -110,11 +110,37 @@ set_target_properties(curl PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${CURL_DIR}/include"
 )
 
+# ==== Restart Helper Executable ====
+set(REST_HELP_DIR ${PROJECT_ROOT}/rest_help)
+add_executable(RestartHelper WIN32
+    ${REST_HELP_DIR}/RestartHelper.cpp
+)
+
+set_target_properties(RestartHelper PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+target_compile_definitions(RestartHelper PRIVATE
+    _WINDOWS
+    $<$<CONFIG:Release>:NDEBUG>
+)
+
+
+add_custom_command(TARGET RestartHelper POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+    "$<TARGET_FILE:RestartHelper>"
+    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/$<TARGET_FILE_NAME:RestartHelper>"
+)
+
 # ==== Executable ====
 add_executable(${PROJECT_NAME} WIN32
     ${SOURCE_FILES}
     ${HEADER_FILES}
 )
+
+# ==== Restart Helper dependency ====
+add_dependencies(${PROJECT_NAME} RestartHelper)
 
 # ==== Grouping headers and source files for vs studio ====
 source_group("Header Files" FILES ${HEADER_FILES})
@@ -138,6 +164,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     advapi32     
     
 )
+
+
 
 # ==== Fonts copying ====
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD

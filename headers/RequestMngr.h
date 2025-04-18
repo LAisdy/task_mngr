@@ -36,8 +36,8 @@ public:
 	RequestMngr();
 	~RequestMngr();
 
-	void start_async_send(DWORD pid);
-	void start_async_get();
+	void start_send(DWORD pid);
+	void start_get();
 	void get_process_dlls(DWORD pid);
 	std::vector<std::wstring> dlls;
 	int init_key(std::filesystem::path keyPath);
